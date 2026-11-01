@@ -22,6 +22,10 @@ def get_producer() -> KafkaProducer:
         logger.info("Creating Kafka producer for %s", KAFKA_BOOTSTRAP_SERVERS)
         _producer = KafkaProducer(
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            acks="all",
+            retries=5,
+            max_block_ms=10000,
+            request_timeout_ms=10000,
             value_serializer=lambda v: json.dumps(v).encode("utf-8"),
             key_serializer=lambda v: json.dumps(v).encode("utf-8") if v is not None else None,
         )
@@ -34,7 +38,7 @@ def send_todo_created_event(todo_id: int, title: str) -> None:
         "todo_id": todo_id,
         "title": title,
     }
-    producer.send(TODO_TOPIC, value=payload, key={"todo_id": todo_id})
+    producer.send(TODO_TOPIC, value=payload, key={"todo_id": todo_id}).get(timeout=30)
 
 
 def create_todo_consumer(group_id: str = "todo-generator") -> KafkaConsumer:
@@ -42,8 +46,8 @@ def create_todo_consumer(group_id: str = "todo-generator") -> KafkaConsumer:
         TODO_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
         group_id=group_id,
-        enable_auto_commit=True,
-        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-        key_deserializer=lambda v: json.loads(v.decode("utf-8")) if v is not None else None,
+        enable_auto_commit=False,
+        max_poll_records=1,
+        max_poll_interval_ms=600000,
         auto_offset_reset="earliest",
     )

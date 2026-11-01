@@ -2,10 +2,20 @@ from api import todos, health, metrics
 from db import database, models
 from fastapi import FastAPI, Request
 from prometheus_client import Counter
+from pathlib import Path
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI()
+static_dir = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(static_dir / "index.html")
 
 http_requests_total = Counter(
     "http_requests_total",

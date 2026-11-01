@@ -11,26 +11,34 @@ from common.models import TodoItem, TodoStep
 from common.kafka_client import create_todo_consumer
 
 from openai import OpenAI
+from kafka import TopicPartition
+from kafka.structs import OffsetAndMetadata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 YANDEX_CLOUD_API_KEY = os.getenv("YANDEX_CLOUD_API_KEY")
 YANDEX_CLOUD_FOLDER = os.getenv("YANDEX_CLOUD_FOLDER")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+client = None
 
-if not YANDEX_CLOUD_API_KEY:
-    raise RuntimeError("YANDEX_CLOUD_API_KEY env var is required for worker")
 
-client = OpenAI(
-    api_key=YANDEX_CLOUD_API_KEY,
-    base_url="https://llm.api.cloud.yandex.net/v1",
-    project=YANDEX_CLOUD_FOLDER
-)
+def get_llm_client() -> OpenAI:
+    global client
+    if not YANDEX_CLOUD_API_KEY or not YANDEX_CLOUD_FOLDER:
+        raise RuntimeError("YANDEX_CLOUD_API_KEY and YANDEX_CLOUD_FOLDER are required")
+    if client is None:
+        client = OpenAI(
+            api_key=YANDEX_CLOUD_API_KEY,
+            base_url="https://llm.api.cloud.yandex.net/v1",
+            project=YANDEX_CLOUD_FOLDER,
+            timeout=60,
+            max_retries=2,
+        )
+    return client
 
 def llm_generate_steps(title: str) -> List[str]:
     """
-    Генерируем шаги при помощи ChatGPT-модели.
+    Генерируем шаги при помощи YandexGPT; ошибки вызова повторяет обработчик.
 
     Просим модель вернуть ЧИСТЫЙ JSON-массив строк:
     ["step 1", "step 2", ...]
@@ -47,31 +55,28 @@ def llm_generate_steps(title: str) -> List[str]:
 
     logger.info("Calling LLM for title: %s", title)
 
-    try:
-        resp = client.chat.completions.create(
-            model=f"gpt://{YANDEX_CLOUD_FOLDER}/yandexgpt/rc",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.4,
-        )
-    except Exception as e:
-        logger.warning(
-            "LLM call failed, using fallback steps for title '%s': %s", title, e
-        )
-        return [f"Review requirements for: {title}"]
+    resp = get_llm_client().chat.completions.create(
+        model=f"gpt://{YANDEX_CLOUD_FOLDER}/yandexgpt/rc",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.4,
+    )
 
-    content = resp.choices[0].message.content.strip()
+    content = (resp.choices[0].message.content or "").strip()
+    if not content:
+        raise ValueError("LLM returned an empty plan")
     logger.debug("LLM raw response: %s", content)
 
     def try_parse_json(text: str) -> List[str] | None:
         try:
             data = json.loads(text)
-            if isinstance(data, list):
-                steps = [str(x).strip() for x in data if str(x).strip()]
-                return steps or None
-        except Exception:
+            if isinstance(data, list) and data and all(
+                isinstance(item, str) and item.strip() for item in data
+            ):
+                return [item.strip() for item in data]
+        except ValueError:
             return None
 
     steps = try_parse_json(content)
@@ -97,24 +102,14 @@ def llm_generate_steps(title: str) -> List[str]:
         if steps:
             return steps
 
-    lines = []
-    for line in content.splitlines():
-        stripped = line.strip("`").strip()
-        if not stripped:
-            continue
-        for prefix in ("- ", "* ", "• ", "1. ", "2. ", "3. ", "4. ", "5. "):
-            if stripped.startswith(prefix):
-                stripped = stripped[len(prefix) :]
-                break
-        lines.append(stripped)
-    if len(lines) > 1:
-        return lines
-
-    return [content]
+    raise ValueError("LLM response must contain a nonempty JSON array of step strings")
 
 
 def process_message(db: Session, todo_id: int, title: str) -> None:
-    todo: TodoItem | None = db.query(TodoItem).filter(TodoItem.id == todo_id).first()
+    """Блокировка задачи защищает от одновременной генерации повторных событий."""
+    todo: TodoItem | None = (
+        db.query(TodoItem).filter(TodoItem.id == todo_id).with_for_update().first()
+    )
     if not todo:
         logger.warning("Todo %s not found, skip", todo_id)
         return
@@ -123,7 +118,8 @@ def process_message(db: Session, todo_id: int, title: str) -> None:
         logger.info("Todo %s already has %d steps, skip", todo_id, len(todo.steps))
         return
 
-    steps_texts = llm_generate_steps(title)
+    # Событие может отстать от редактирования задачи; используем актуальное название.
+    steps_texts = llm_generate_steps(todo.title)
     logger.info("Generated %d steps for todo %s (%s)", len(steps_texts), todo_id, title)
 
     for text in steps_texts:
@@ -134,32 +130,46 @@ def process_message(db: Session, todo_id: int, title: str) -> None:
     logger.info("Saved %d steps for todo %s", len(steps_texts), todo_id)
 
 
+def handle_record(consumer, msg) -> None:
+    """Подтвердить конкретный offset только после успешной обработки.
+
+    Некорректные внешние сообщения пропускаются с записью в журнал.
+    Ошибки БД и LLM выходят наружу: consumer будет пересоздан без commit.
+    """
+    try:
+        value = json.loads(msg.value)
+        todo_id = value.get("todo_id") if isinstance(value, dict) else None
+        if type(todo_id) is not int or todo_id <= 0:
+            raise ValueError("todo_id must be a positive integer")
+    except (ValueError, TypeError, UnicodeDecodeError):
+        logger.error("Skipping invalid event at %s:%s:%s", msg.topic, msg.partition, msg.offset)
+    else:
+        with SessionLocal() as db:
+            try:
+                process_message(db, todo_id=todo_id, title=value.get("title", ""))
+            except Exception:
+                db.rollback()
+                raise
+    consumer.commit({
+        TopicPartition(msg.topic, msg.partition): OffsetAndMetadata(msg.offset + 1, "", -1)
+    })
+
+
 def main() -> None:
-    consumer = create_todo_consumer(group_id="todo-generator")
-    logger.info("Todo generator worker started. Waiting for messages...")
-
+    get_llm_client()
     while True:
-        db = SessionLocal()
+        consumer = None
         try:
+            consumer = create_todo_consumer(group_id="todo-generator")
+            logger.info("Todo generator worker started. Waiting for messages...")
             for msg in consumer:
-                value = msg.value
-                todo_id = value.get("todo_id")
-                title = value.get("title", "")
-
-                logger.info("Got message for todo_id=%s, title=%s", todo_id, title)
-                if todo_id is None:
-                    logger.warning("No todo_id in message, skip: %s", value)
-                    continue
-
-                try:
-                    process_message(db, todo_id=todo_id, title=title)
-                except Exception as e:
-                    logger.exception("Error processing message for todo %s: %s", todo_id, e)
-        except Exception as e:
-            logger.exception("Worker loop crashed: %s. Sleep and retry...", e)
-            time.sleep(5)
+                handle_record(consumer, msg)
+        except Exception:
+            logger.exception("Worker failed; uncommitted messages will be retried")
         finally:
-            db.close()
+            if consumer is not None:
+                consumer.close(autocommit=False)
+        time.sleep(5)
 
 
 if __name__ == "__main__":

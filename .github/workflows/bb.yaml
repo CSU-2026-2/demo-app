@@ -5,6 +5,9 @@ on:
     branches: [ "main" ]
     paths:
       - "app/**"
+      - "common/**"
+      - ".dockerignore"
+      - ".github/workflows/bb.yaml"
 
 jobs:
   build:
@@ -14,6 +17,7 @@ jobs:
       packages: write
     outputs:
       image_tag: ${{ steps.settag.outputs.image_tag }}
+      image_repository: ghcr.io/${{ steps.setowner.outputs.owner_lc }}/demo-app
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +44,8 @@ jobs:
           context: .
           file: ./app/Dockerfile.kube
           push: true
+          cache-from: type=gha,scope=demo-app
+          cache-to: type=gha,scope=demo-app,mode=max
           tags: |
             ghcr.io/${{ steps.setowner.outputs.owner_lc }}/demo-app:${{ steps.settag.outputs.image_tag }}
 
@@ -55,13 +61,15 @@ jobs:
       - name: Checkout Config Repo
         uses: actions/checkout@v4
         with:
-          repository: CSU-ITMO-2025-2/demo-app-helm # URL вашего репозитория Helm-чартов
+          repository: CSU-2026-2/demo-app-helm # URL вашего репозитория Helm-чартов
           path: helm-config                       # Клонируем в подкаталог helm-config
           token: ${{ secrets.CONFIG_REPO_PAT }}   # Используем токен с правами записи
 
       # 2. Установка YQ и обновление values.yaml
       - name: Update image.tag in helm/values.yaml
         id: update_tag
+        env:
+          NEW_IMAGE_REPOSITORY: ${{ needs.build.outputs.image_repository }}
         run: |
           NEW_TAG="${{ needs.build.outputs.image_tag }}"
           CONFIG_PATH="helm-config/values.yaml"
@@ -72,12 +80,13 @@ jobs:
 
           # Обновление тега в файле конфигурации
           yq eval -i ".app.image.tag = \"${NEW_TAG}\"" "$CONFIG_PATH"
+          yq eval -i '.app.image.repository = strenv(NEW_IMAGE_REPOSITORY)' "$CONFIG_PATH"
           
           # Проверка, есть ли изменения в файле после yq
           if [[ $(git -C helm-config status --porcelain) ]]; then
-            echo "::set-output name=files_changed::true"
+            echo "files_changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::set-output name=files_changed::false"
+            echo "files_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       # 3. Создание PR в удаленном репозитории

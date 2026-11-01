@@ -5,10 +5,12 @@ on:
     branches: [ "main" ]
     paths:
       - "worker/**"
+      - "common/**"
+      - ".dockerignore"
       - ".github/workflows/bb-worker.yaml"
 
 env:
-  CONFIG_REPO: CSU-ITMO-2025-2/demo-app-helm
+  CONFIG_REPO: CSU-2026-2/demo-app-helm
   VALUES_FILE: values.yaml
   IMAGE_NAME: demo-worker
 
@@ -20,6 +22,7 @@ jobs:
       packages: write
     outputs:
       image_tag: ${{ steps.settag.outputs.image_tag }}
+      image_repository: ghcr.io/${{ steps.setowner.outputs.owner_lc }}/${{ env.IMAGE_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +49,8 @@ jobs:
           context: .
           file: ./worker/Dockerfile.kube
           push: true
+          cache-from: type=gha,scope=demo-worker
+          cache-to: type=gha,scope=demo-worker,mode=max
           tags: |
             ghcr.io/${{ steps.setowner.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:${{ steps.settag.outputs.image_tag }}
 
@@ -66,6 +71,8 @@ jobs:
 
       - name: Update image.tag in helm/values.yaml
         id: update_tag
+        env:
+          NEW_IMAGE_REPOSITORY: ${{ needs.build.outputs.image_repository }}
         run: |
           NEW_TAG="${{ needs.build.outputs.image_tag }}"
           CONFIG_PATH="helm-config/${{ env.VALUES_FILE }}"
@@ -74,6 +81,7 @@ jobs:
           chmod +x /usr/local/bin/yq
 
           yq eval -i ".worker.image.tag = \"${NEW_TAG}\"" "$CONFIG_PATH"
+          yq eval -i '.worker.image.repository = strenv(NEW_IMAGE_REPOSITORY)' "$CONFIG_PATH"
 
           if [[ $(git -C helm-config status --porcelain) ]]; then
             echo "files_changed=true" >> "$GITHUB_OUTPUT"

@@ -1,6 +1,6 @@
 from typing import List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TodoStep(BaseModel):
@@ -9,19 +9,22 @@ class TodoStep(BaseModel):
     description: str
     completed: bool
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TodoCreate(BaseModel):
-    title: str
-    description: str
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=4000)
     completed: bool = False
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class StepUpdate(BaseModel):
+    completed: bool
 
 
 class TodoItem(TodoCreate):
     id: int
-    steps: List[TodoStep] = []
+    steps: List[TodoStep] = Field(default_factory=list)
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
