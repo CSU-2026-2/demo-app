@@ -4,7 +4,7 @@ from crud import todos as crud_todos
 from db.database import get_db
 from fastapi import APIRouter, Depends, HTTPException
 from schemas.todos import TodoCreate, TodoItem, TodoStep, StepUpdate
-from common.models import TodoStep as StepModel
+from common.models import TodoItem as TaskModel, TodoStep as StepModel
 from sqlalchemy.orm import Session
 
 router = APIRouter()
@@ -61,11 +61,20 @@ def generate_plan(todo_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/todos/{todo_id}/steps/{step_id}", response_model=TodoStep)
 def update_step(todo_id: int, step_id: int, body: StepUpdate, db: Session = Depends(get_db)):
+    # Сериализуем изменения шагов одной задачи, чтобы параллельные запросы
+    # корректно вычисляли общий статус выполнения.
+    todo = db.query(TaskModel).filter(TaskModel.id == todo_id).with_for_update().first()
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Task not found")
     step = db.query(StepModel).filter(StepModel.id == step_id, StepModel.todo_id == todo_id).first()
     if step is None:
         raise HTTPException(status_code=404, detail="Step not found")
     try:
         step.completed = body.completed
+        db.flush()
+        todo.completed = not db.query(StepModel).filter(
+            StepModel.todo_id == todo_id, StepModel.completed.is_(False)
+        ).first()
         db.commit()
         db.refresh(step)
     except Exception:

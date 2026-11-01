@@ -107,6 +107,28 @@ def test_invalid_task_title_is_rejected(db, title):
         assert client.post("/todos", json={"title": title}).status_code == 422
 
 
+def test_task_completes_with_last_step_and_reopens_when_unchecked(db):
+    todo = new_todo(db)
+    steps = [TodoStep(todo_id=todo.id, description=text, completed=False) for text in ("First", "Last")]
+    db.add_all(steps)
+    db.commit()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as client:
+        def patch_step(step, completed):
+            response = client.patch(f"/todos/{todo.id}/steps/{step.id}", json={"completed": completed})
+            assert response.status_code == 200
+        patch_step(steps[0], True)
+        assert client.get(f"/todos/{todo.id}").json()["completed"] is False
+        patch_step(steps[1], True)
+        assert client.get("/todos").json()[0]["completed"] is True
+        patch_step(steps[1], True)
+        assert client.get(f"/todos/{todo.id}").json()["completed"] is True
+        patch_step(steps[0], False)
+        assert client.get(f"/todos/{todo.id}").json()["completed"] is False
+
+
 @pytest.mark.parametrize("content", ["", "[]", '[null]', '[" "]', "Service unavailable"])
 def test_invalid_llm_plan_is_retried(content, monkeypatch):
     client = Mock()
@@ -238,3 +260,25 @@ def test_concurrent_deliveries_generate_one_plan(db, session_factory, monkeypatc
         second.result(timeout=10)
     generator.assert_called_once()
     assert db.query(TodoStep).count() == 2
+
+
+def test_concurrent_step_completion_updates_task(db, session_factory):
+    if db.bind.dialect.name != "postgresql":
+        pytest.skip("Requires PostgreSQL row locks")
+    from api.todos import update_step
+    from schemas.todos import StepUpdate
+    todo = new_todo(db)
+    todo_id = todo.id
+    db.add_all([TodoStep(todo_id=todo_id, description=str(index), completed=False) for index in range(4)])
+    db.commit()
+    ids = [step.id for step in db.query(TodoStep).filter_by(todo_id=todo_id)]
+    db.close()
+
+    def complete(step_id):
+        with session_factory() as session:
+            update_step(todo_id, step_id, StepUpdate(completed=True), session)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(complete, ids))
+    assert db.get(TodoItem, todo_id).completed is True
+    assert db.query(TodoStep).filter_by(todo_id=todo_id, completed=True).count() == 4
