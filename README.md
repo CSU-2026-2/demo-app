@@ -1,4 +1,4 @@
-﻿# По шагам
+# По шагам
 
 Планер задач на FastAPI с интерфейсом на русском языке. PostgreSQL хранит задачи
 и шаги, Kafka передаёт запросы обработчику, YandexGPT составляет план.
@@ -48,6 +48,9 @@
 ## Kubernetes и CI
 
 Чарт: `CSU-2026-2/demo-app-helm` (локально `../demo-app-helm`). Он разворачивает
-API с фронтендом, worker, Service и опциональный Ingress. PostgreSQL, Kafka,
+API с фронтендом, worker, Service и HTTPRoute для Envoy Gateway. Общая Kafka развёрнута
+отдельным приложением Argo CD из готового Helm-чарта CloudPirates; адрес внутри кластера —
+`kafka.kafka.svc.cluster.local:9092`, топик — `todos-created`.
+Манифесты общей Kafka: `../kubepractice/kafka/`. PostgreSQL,
 TLS и секреты предоставляет окружение. Workflows обновляют адреса и теги образов,
 используют отдельные кеши Docker и учитывают изменения `common/**`.
