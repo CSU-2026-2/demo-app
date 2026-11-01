@@ -5,10 +5,12 @@ from prometheus_client import Counter
 from pathlib import Path
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from auth import install_auth
 
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI()
+install_auth(app)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 

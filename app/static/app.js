@@ -1,6 +1,12 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { todos: [], filter: 'all', query: '', expanded: new Set(), editing: null, loading: false };
 let toastTimer;
+$('#logout').addEventListener('click', async () => {
+  try {
+    await api('/auth/logout', { method: 'POST' });
+    location.replace('/login');
+  } catch (error) { showError(error); }
+});
 $('#today').textContent = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', weekday: 'long' }).format(new Date());
 
 function element(tag, className, text) {
@@ -16,6 +22,10 @@ async function api(path, options = {}) {
     response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
   } catch {
     throw new Error('Не удалось связаться с сервером. Проверьте соединение и попробуйте ещё раз.');
+  }
+  if (response.status === 401) {
+    location.replace('/login');
+    throw new Error('Требуется вход');
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

@@ -65,6 +65,10 @@ services:
       DATABASE_URL: postgresql://postgres:password@db:5432/todo_db
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       KAFKA_TODO_TOPIC: ${KAFKA_TODO_TOPIC:-todos-created}
+      AUTH_USERNAME: ${AUTH_USERNAME:?Set AUTH_USERNAME in .env}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:?Set AUTH_PASSWORD in .env}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:?Set AUTH_SESSION_SECRET in .env}
+      AUTH_COOKIE_SECURE: "false"
     volumes:
       - ./app:/app
       - ./common:/app/common

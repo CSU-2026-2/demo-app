@@ -32,15 +32,24 @@ def record(value, offset=7):
     return SimpleNamespace(value=value, topic="todos-created", partition=0, offset=offset)
 
 
-def test_frontend_is_served_with_assets():
+def test_frontend_is_served_with_assets(monkeypatch, db):
+    monkeypatch.setenv("AUTH_USERNAME", "frontend-test")
+    monkeypatch.setenv("AUTH_PASSWORD", "test-password")
+    monkeypatch.setenv("AUTH_SESSION_SECRET", "t" * 48)
     from main import app
-    with TestClient(app) as client:
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app, base_url="https://testserver") as client:
+        assert client.get("/todos").status_code == 401
+        assert client.get("/", follow_redirects=False).status_code == 303
+        assert client.post("/auth/login", json={"username": "frontend-test", "password": "test-password"}).status_code == 200
         response = client.get("/")
         assert response.status_code == 200
         assert '<html lang="ru">' in response.text
+        assert client.get("/todos").status_code == 200
         for path in ("/static/app.js", "/static/style.css"):
             assert client.get(path).status_code == 200
         assert client.get("/static/nonexistent.js").status_code == 404
+    app.dependency_overrides.clear()
 
 
 def test_api_crud_and_nested_steps(db):
