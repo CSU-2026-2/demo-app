@@ -127,6 +127,35 @@ def test_llm_fenced_json_plan(monkeypatch):
     assert worker.llm_generate_steps("Title") == ["Read", "Practice"]
 
 
+def test_description_is_sent_to_llm_and_ten_steps_are_kept(monkeypatch):
+    steps = [f"Step {index}" for index in range(1, 11)]
+    client = Mock()
+    client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(steps)))]
+    )
+    monkeypatch.setattr(worker, "get_llm_client", lambda: client)
+    assert worker.llm_generate_steps("Explain Kubernetes", "В 10 шагах") == steps
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    assert json.loads(messages[1]["content"]) == {
+        "title": "Explain Kubernetes", "description": "В 10 шагах"
+    }
+    assert "ровно столько шагов" in messages[0]["content"]
+
+
+def test_worker_uses_current_description_and_saves_ten_steps(db, monkeypatch):
+    todo = new_todo(db)
+    todo.description = "В 10 шагах"
+    db.commit()
+    steps = [f"Step {index}" for index in range(1, 11)]
+    generate = Mock(return_value=steps)
+    monkeypatch.setattr(worker, "llm_generate_steps", generate)
+    worker.process_message(db, todo.id, "Stale event title")
+    generate.assert_called_once_with(todo.title, "В 10 шагах")
+    assert [step.description for step in db.query(TodoStep).order_by(TodoStep.id)] == steps
+    worker.process_message(db, todo.id, "Repeated event")
+    generate.assert_called_once()
+
+
 def test_worker_commit_failure_replay_is_idempotent(db, session_factory, monkeypatch):
     todo = new_todo(db)
     todo_id = todo.id
@@ -142,7 +171,7 @@ def test_worker_commit_failure_replay_is_idempotent(db, session_factory, monkeyp
     consumer.commit.side_effect = None
     worker.handle_record(consumer, msg)
     assert db.query(TodoStep).count() == 2
-    generate.assert_called_once_with("Learn Python")
+    generate.assert_called_once_with("Learn Python", "Practice")
     offsets = consumer.commit.call_args.args[0]
     assert next(iter(offsets.values())).offset == 8
 
@@ -181,7 +210,7 @@ def test_concurrent_deliveries_generate_one_plan(db, session_factory, monkeypatc
     db.close()
     entered, release, second_started = Event(), Event(), Event()
 
-    def generate(_):
+    def generate(_title, _description):
         entered.set()
         assert release.wait(10)
         return ["Read", "Practice"]

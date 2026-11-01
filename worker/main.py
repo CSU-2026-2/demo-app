@@ -36,7 +36,7 @@ def get_llm_client() -> OpenAI:
         )
     return client
 
-def llm_generate_steps(title: str) -> List[str]:
+def llm_generate_steps(title: str, description: str = "") -> List[str]:
     """
     Генерируем шаги при помощи YandexGPT; ошибки вызова повторяет обработчик.
 
@@ -45,13 +45,17 @@ def llm_generate_steps(title: str) -> List[str]:
     """
     system_prompt = (
         "Ты помощник, который помогает разбивать цель пользователя на конкретный план действий.\n"
-        "ПОЛУЧИШЬ только формулировку цели (title).\n\n"
-        "Нужно вернуть 3–7 коротких конкретных шагов, что делать, чтобы приблизиться к цели.\n"
+        "Получишь название цели и её описание с пожеланиями пользователя.\n"
+        "Учитывай пожелания из обоих полей при составлении плана.\n"
+        "Если пользователь указал количество шагов, верни ровно столько шагов.\n"
+        "Если количество не указано, верни 3–7 коротких конкретных шагов.\n"
         "Формат ответа — СТРОГО JSON-массив строк, без текста до или после.\n"
         'Пример: ["Сделай X", "Сделай Y", "Сделай Z"]'
     )
 
-    user_prompt = f"Цель: {title}"
+    user_prompt = json.dumps(
+        {"title": title, "description": description}, ensure_ascii=False
+    )
 
     logger.info("Calling LLM for title: %s", title)
 
@@ -118,8 +122,8 @@ def process_message(db: Session, todo_id: int, title: str) -> None:
         logger.info("Todo %s already has %d steps, skip", todo_id, len(todo.steps))
         return
 
-    # Событие может отстать от редактирования задачи; используем актуальное название.
-    steps_texts = llm_generate_steps(todo.title)
+    # Событие может отстать от редактирования; используем актуальные поля из БД.
+    steps_texts = llm_generate_steps(todo.title, todo.description or "")
     logger.info("Generated %d steps for todo %s (%s)", len(steps_texts), todo_id, title)
 
     for text in steps_texts:
