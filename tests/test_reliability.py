@@ -15,6 +15,7 @@ from common.models import TodoItem, TodoStep
 from crud.todos import create_todo
 from schemas.todos import TodoCreate
 from worker import main as worker
+from auth import get_current_user_id
 
 
 @pytest.fixture(autouse=True)
@@ -25,18 +26,19 @@ def kafka_sender(monkeypatch):
 
 
 def new_todo(db, title="Learn Python"):
-    return create_todo(db, TodoCreate(title=title, description="Practice"))
+    return create_todo(db, TodoCreate(title=title, description="Practice"), 1)
 
 
 def record(value, offset=7):
     return SimpleNamespace(value=value, topic="todos-created", partition=0, offset=offset)
 
 
-def test_frontend_is_served_with_assets(monkeypatch, db):
+def test_frontend_is_served_with_assets(monkeypatch, db, session_factory):
     monkeypatch.setenv("AUTH_USERNAME", "frontend-test")
     monkeypatch.setenv("AUTH_PASSWORD", "test-password")
-    monkeypatch.setenv("AUTH_SESSION_SECRET", "t" * 48)
+    monkeypatch.setenv("JWT_SECRET_KEY", "t" * 48)
     from main import app
+    app.state.auth_session_factory = session_factory
     app.dependency_overrides[get_db] = lambda: db
     with TestClient(app, base_url="https://testserver") as client:
         assert client.get("/todos").status_code == 401
@@ -56,6 +58,7 @@ def test_api_crud_and_nested_steps(db):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user_id] = lambda: 1
     with TestClient(app) as client:
         assert client.get("/todos").json() == []
         body = {"title": "Learn Python", "description": "Practice", "completed": False}
@@ -82,6 +85,7 @@ def test_kafka_failure_keeps_task_and_allows_retry(db, kafka_sender):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user_id] = lambda: 1
     with TestClient(app) as client:
         assert client.post(f"/todos/{todo.id}/generate").status_code == 503
         kafka_sender.side_effect = None
@@ -99,6 +103,7 @@ def test_step_completion_and_task_ownership(db, kafka_sender):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user_id] = lambda: 1
     with TestClient(app) as client:
         assert client.patch(f"/todos/{other.id}/steps/{step.id}", json={"completed": True}).status_code == 404
         assert client.patch(f"/todos/{todo.id}/steps/{step.id}", json={"completed": True}).json()["completed"] is True
@@ -112,6 +117,7 @@ def test_invalid_task_title_is_rejected(db, title):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user_id] = lambda: 1
     with TestClient(app) as client:
         assert client.post("/todos", json={"title": title}).status_code == 422
 
@@ -124,6 +130,7 @@ def test_task_completes_with_last_step_and_reopens_when_unchecked(db):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user_id] = lambda: 1
     with TestClient(app) as client:
         def patch_step(step, completed):
             response = client.patch(f"/todos/{todo.id}/steps/{step.id}", json={"completed": completed})
@@ -285,7 +292,7 @@ def test_concurrent_step_completion_updates_task(db, session_factory):
 
     def complete(step_id):
         with session_factory() as session:
-            update_step(todo_id, step_id, StepUpdate(completed=True), session)
+            update_step(todo_id, step_id, StepUpdate(completed=True), session, 1)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(complete, ids))

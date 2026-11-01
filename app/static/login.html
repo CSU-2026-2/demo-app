@@ -10,14 +10,16 @@
 <body class="login-page">
   <main class="login-card">
     <p class="eyebrow">ПО ШАГАМ</p>
-    <h1>С возвращением</h1>
-    <p>Войдите, чтобы продолжить работу с задачами.</p>
+    <h1 id="auth-heading">С возвращением</h1>
+    <p id="auth-description">Войдите, чтобы продолжить работу с задачами.</p>
     <form id="login-form">
-      <label>Логин<input name="username" autocomplete="username" required maxlength="200" autofocus></label>
-      <label>Пароль<input name="password" type="password" autocomplete="current-password" required maxlength="1000"></label>
+      <label>Логин<input name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{2,31}" title="3–32 символа: латинские буквы, цифры, точка, дефис, подчёркивание" autofocus></label>
+      <label>Пароль<input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128"></label>
+      <label id="confirm-label" hidden>Повторите пароль<input name="confirmation" type="password" autocomplete="new-password" minlength="8" maxlength="128"></label>
       <p id="login-error" class="error" role="alert" hidden></p>
       <button class="primary" type="submit">Войти</button>
     </form>
+    <p><a id="auth-switch" href="/register">Нет аккаунта? Зарегистрироваться</a></p>
   </main>
 </body>
 </html>

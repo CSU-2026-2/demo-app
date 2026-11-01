@@ -67,7 +67,7 @@ services:
       KAFKA_TODO_TOPIC: ${KAFKA_TODO_TOPIC:-todos-created}
       AUTH_USERNAME: ${AUTH_USERNAME:?Set AUTH_USERNAME in .env}
       AUTH_PASSWORD: ${AUTH_PASSWORD:?Set AUTH_PASSWORD in .env}
-      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:?Set AUTH_SESSION_SECRET in .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
       AUTH_COOKIE_SECURE: "false"
     volumes:
       - ./app:/app

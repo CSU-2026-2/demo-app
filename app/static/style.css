@@ -7,6 +7,7 @@ body.login-page { display: grid; place-items: center; min-height: 100vh; padding
 .login-card h1 { font-size: 30px; margin: 12px 0; }
 .login-card form { display: grid; gap: 20px; margin-top: 28px; }
 .login-card label { display: grid; gap: 8px; }
+.login-card [hidden] { display: none; }
 .login-card input { width: 100%; padding: 12px; border: 1px solid #cbd3c4; border-radius: 8px; font: inherit; }
 .login-card input:focus { outline: 2px solid #668459; outline-offset: 2px; }
 .login-card .primary { justify-content: center; }

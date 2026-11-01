@@ -1,4 +1,18 @@
-document.querySelector('#login-form').addEventListener('submit', async (event) => {
+const registration = location.pathname === '/register';
+const form = document.querySelector('#login-form');
+if (registration) {
+  document.title = 'Регистрация — По шагам';
+  document.querySelector('#auth-heading').textContent = 'Создать аккаунт';
+  document.querySelector('#auth-description').textContent = 'Ваши задачи будут доступны только вам.';
+  form.querySelector('button').textContent = 'Зарегистрироваться';
+  form.elements.password.autocomplete = 'new-password';
+  document.querySelector('#confirm-label').hidden = false;
+  form.elements.confirmation.required = true;
+  const link = document.querySelector('#auth-switch');
+  link.href = '/login';
+  link.textContent = 'Уже есть аккаунт? Войти';
+}
+form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('button');
@@ -6,10 +20,13 @@ document.querySelector('#login-form').addEventListener('submit', async (event) =
   button.disabled = true;
   error.hidden = true;
   try {
-    const response = await fetch('/auth/login', {
+    if (registration && form.elements.password.value !== form.elements.confirmation.value) {
+      throw new Error('Пароли не совпадают.');
+    }
+    const response = await fetch(registration ? '/auth/register' : '/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+      body: JSON.stringify({ username: form.elements.username.value, password: form.elements.password.value }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));

@@ -34,4 +34,8 @@ def session_factory():
 @pytest.fixture()
 def db(session_factory):
     with session_factory() as session:
+        from common.models import User
+        from common.passwords import hash_password
+        session.add(User(username="frontend-test", password_hash=hash_password("test-password")))
+        session.commit()
         yield session

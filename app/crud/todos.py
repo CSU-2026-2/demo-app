@@ -22,17 +22,17 @@ def try_request_plan(todo: TodoItem) -> None:
         logger.exception("Could not request plan for task %s; request can be retried", todo.id)
 
 
-def get_todos(db: Session):
-    return db.query(TodoItem).all()
+def get_todos(db: Session, owner_id: int):
+    return db.query(TodoItem).filter(TodoItem.owner_id == owner_id).all()
 
 
-def get_todo_by_id(db: Session, todo_id: int):
-    return db.query(TodoItem).filter(TodoItem.id == todo_id).first()
+def get_todo_by_id(db: Session, todo_id: int, owner_id: int):
+    return db.query(TodoItem).filter(TodoItem.id == todo_id, TodoItem.owner_id == owner_id).first()
 
 
-def create_todo(db: Session, todo: TodoCreate):
+def create_todo(db: Session, todo: TodoCreate, owner_id: int):
     try:
-        db_todo = TodoItem(**todo.model_dump())
+        db_todo = TodoItem(**todo.model_dump(), owner_id=owner_id)
         db.add(db_todo)
         db.commit()
     except Exception:

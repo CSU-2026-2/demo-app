@@ -6,8 +6,10 @@ from pathlib import Path
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from auth import install_auth
+from migrate import initialize_schema
+import os
 
-models.Base.metadata.create_all(bind=database.engine)
+initialize_schema(database.engine, os.environ["AUTH_USERNAME"], os.environ["AUTH_PASSWORD"])
 
 app = FastAPI()
 install_auth(app)

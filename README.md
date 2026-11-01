@@ -16,15 +16,49 @@
 
 ## Вход
 
-Приложение использует одну общую учётную запись. Задачи общие для всех входов.
-Страница `/login` выдаёт подписанную HttpOnly cookie на 12 часов; кнопка «Выйти»
-удаляет cookie из браузера. API и документация требуют входа, `/health` и `/metrics`
-доступны для Kubernetes и мониторинга. Смена ключа подписи завершает все сессии.
+Страницы `/register` и `/login` позволяют создать аккаунт и войти. Каждый пользователь
+видит только свои задачи; чужие задачи и шаги возвращают 404. Логин: 3–32 символа
+латиницей, цифры, точка, дефис и подчёркивание; пароль: 8–128 символов.
+Пароли хранятся в PostgreSQL как PBKDF2-SHA256 с солью и 600 000 итераций.
 
-Обязательные переменные API: `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_SESSION_SECRET`
-(случайная строка от 32 символов). В Kubernetes они берутся из Secret `demo-auth`.
-Действующий пароль хранится только в Secret, не в Git. Для Compose заполните `.env`
-по `.env.example`; только для локального HTTP Compose отключает Secure у cookie.
+`POST /auth/register` и `POST /auth/login` принимают JSON `username` / `password`
+и возвращают `access_token`, `token_type: bearer`, `expires_in: 3600` и `user`.
+Используется JWT HS256 с проверкой подписи, `sub`, `exp`, `iat`, `iss`, `aud`, `jti`.
+API-клиент передаёт `Authorization: Bearer <access_token>`, браузер использует JWT
+в HttpOnly Secure SameSite=Strict cookie. Токены не сохраняются в localStorage.
+`GET /auth/me` возвращает текущего пользователя; `POST /auth/logout` отзывает текущий
+JWT в PostgreSQL и удаляет cookie. Автоматического продления токена нет: через час
+нужно войти снова. `/health` и `/metrics` доступны для Kubernetes и мониторинга.
+
+`JWT_SECRET_KEY` — случайная строка от 32 символов. В Kubernetes значение берётся
+из ключа `AUTH_SESSION_SECRET` существующего Secret `demo-auth`. `AUTH_USERNAME`
+и `AUTH_PASSWORD` используются только для первого создания учётной записи demo:
+при обновлении схемы ей передаются прежние общие задачи и шаги. Повторный запуск
+не сбрасывает пароль и не меняет владельцев. Смена JWT-ключа завершает все сессии.
+Для Compose заполните `.env` по `.env.example`; только для локального HTTP Compose
+отключает Secure у cookie. Реальные пароли и ключи не сохраняются в Git.
+
+## Миграции PostgreSQL
+
+Схемой управляет Alembic; `create_all` при запуске API больше не используется.
+API выполняет `upgrade head` перед запуском; PostgreSQL advisory lock сериализует
+миграции при одновременном старте реплик. При ошибке миграции API не запускается.
+Ревизия `0001_tasks` создаёт таблицы задач в новой БД либо проверяет и принимает
+старую схему без таблицы версий. `0002_users_jwt` добавляет пользователей, сессии
+и `owner_id`, сохраняя старые задачи и шаги за первым пользователем.
+
+Из корня репозитория с настроенными `DATABASE_URL`, `AUTH_USERNAME`, `AUTH_PASSWORD`:
+
+```sh
+alembic -c app/alembic.ini upgrade head
+alembic -c app/alembic.ini current
+alembic -c app/alembic.ini check
+alembic -c app/alembic.ini revision --autogenerate -m "describe schema change"
+```
+
+Новую ревизию нужно проверить до применения. `downgrade` выполняется только вручную:
+откат `0002_users_jwt` удаляет пользователей, сессии и владельцев, сохраняя задачи;
+откат до `base` удаляет и таблицы задач. Worker миграции не выполняет.
 
 ## API
 
