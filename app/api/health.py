@@ -8,4 +8,4 @@ def read_health():
     """
     Простой эндпоинт для liveness/readiness проб.
     """
-    return {"status": "ok"}
+    return {"status": os.getenv("HEALTH_STATUS_ENV", "ok")}
